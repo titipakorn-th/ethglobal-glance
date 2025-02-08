@@ -1,0 +1,1 @@
+{"wallet_id": "473c1e53-732c-4b85-812e-92ac931ec8bc", "seed": "861a32ff6ebba516e57124b11e8f58b176bc5b0513493976df955fc9a3126de82fc18e9d76801de9610f555057afa5ad8cc7253e90e592a7e2ab5b6685228c2d", "network_id": "base-sepolia", "default_address_id": "0x8B32420E0a08465394682943e5Ccd7F345fe94A8"}

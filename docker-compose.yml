@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: glance_db
+    ports:
+      - "7777:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+  redis:
+    container_name: glance_redis_service
+    image: redis:alpine
+    ports:
+      - "7776:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+  app_service:
+    container_name: glance_app_service
+    build: .
+    ports:
+      - "7775:8000"
+    restart: unless-stopped
+    depends_on:
+      - redis
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=glance_redis_service
+      - REDIS_PORT=6379
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  default:
+    external:
+      name: glance_network
