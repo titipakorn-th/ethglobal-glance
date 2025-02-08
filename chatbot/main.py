@@ -10,6 +10,8 @@ from enum import Enum
 import uvicorn
 import json
 import random
+from fastapi.middleware.cors import CORSMiddleware
+
 
 # Add imports at the top
 from redis import Redis
@@ -74,6 +76,17 @@ wallet_data_file = "wallet_data.txt"
 load_dotenv()
 
 app = FastAPI()
+
+origins = ["*"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 def initialize_agent():
     """Initialize the agent with CDP Agentkit."""
