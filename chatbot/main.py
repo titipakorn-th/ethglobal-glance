@@ -1,8 +1,9 @@
 import os
 import sys
 import time
+import jwt
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Header
 from pydantic import BaseModel
 from typing import List, Optional
 from uuid import uuid4, UUID
@@ -11,6 +12,8 @@ import uvicorn
 import json
 import random
 from fastapi.middleware.cors import CORSMiddleware
+import requests
+import re
 
 
 # Add imports at the top
@@ -87,6 +90,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def read_pem_file(file_path):
+    """
+    Read a PEM file and return its contents as a string
+    
+    Args:
+        file_path (str): Path to the PEM file
+        
+    Returns:
+        str: Contents of the PEM file
+        
+    Raises:
+        FileNotFoundError: If file does not exist
+        ValueError: If file is not properly formatted
+    """
+    try:
+        with open(file_path, 'r') as pem_file:
+            pem_data = pem_file.read().strip()
+            
+            # Basic validation of PEM format
+            if not (pem_data.startswith('-----BEGIN') and pem_data.endswith('-----')):
+                raise ValueError("Invalid PEM file format")
+                
+            return pem_data
+            
+    except FileNotFoundError:
+        raise FileNotFoundError(f"PEM file not found at {file_path}")
 
 def initialize_agent():
     """Initialize the agent with CDP Agentkit."""
@@ -258,6 +287,156 @@ Remember: Return ONLY the JSON object, nothing else."""
         state_modifier=instruction_prompt,
     ), config
 
+def initialize_transform_content_agent():
+    """Initialize the agent with CDP Agentkit."""
+    # Initialize LLM.
+    llm = ChatOpenAI(model="gpt-4o-mini")
+
+    wallet_data = None
+
+    if os.path.exists(wallet_data_file):
+        with open(wallet_data_file) as f:
+            wallet_data = f.read()
+
+    # Configure CDP Agentkit Langchain Extension.
+    values = {}
+    if wallet_data is not None:
+        # If there is a persisted agentic wallet, load it and pass to the CDP Agentkit Wrapper.
+        values = {"cdp_wallet_data": wallet_data}
+
+    agentkit = CdpAgentkitWrapper(**values)
+
+    # persist the agent's CDP MPC Wallet Data.
+    wallet_data = agentkit.export_wallet()
+    with open(wallet_data_file, "w") as f:
+        f.write(wallet_data)
+
+    # Initialize CDP Agentkit Toolkit and get tools.
+    cdp_toolkit = CdpToolkit.from_cdp_agentkit_wrapper(agentkit)
+    tools = cdp_toolkit.get_tools()
+
+    # Store buffered conversation history in memory.
+    memory = MemorySaver()
+    config = {"configurable": {"thread_id": "CDP Agentkit Context Transform AGENT!"}}
+
+    instruction_prompt="""Transform the following social media-style short messages into {target_context} while maintaining these key characteristics:
+1. Keep responses very short (mostly 1-5 words)
+2. Preserve casual/informal tone
+3. Maintain timestamps/years when mentioned
+4. Keep any numeric references
+5. Mirror the original interaction pattern
+6. Preserve abbreviations and informal punctuation
+7. Keep any conditional/hypothetical questions in similar format
+8. Maintain any meta-commentary about systems/features
+9. Keep references to status updates/changes
+10. Preserve the sense of community knowledge/inside references
+
+Format rules:
+- Each response on a new line
+- No quotation marks
+- Keep lowercase style where used
+- Preserve exclamation marks and informal punctuation
+- Keep 'lol' and similar casual expressions
+- Maintain the flow of agreement/reaction patterns
+- Do not include any other text, explanations, or commentary
+
+Target length: Similar number of lines as input
+Style: Casual, reactive, community-focused
+Tone: Informal, knowledgeable, engaged"""
+
+    # Create ReAct Agent using the LLM and CDP Agentkit tools.
+    return create_react_agent(
+        llm,
+        tools=tools,
+        checkpointer=memory,
+        state_modifier=instruction_prompt,
+    ), config
+
+def initialize_poll_created_from_context_agent():
+    """Initialize the agent with CDP Agentkit."""
+    # Initialize LLM.
+    llm = ChatOpenAI(model="gpt-4o-mini")
+
+    wallet_data = None
+
+    if os.path.exists(wallet_data_file):
+        with open(wallet_data_file) as f:
+            wallet_data = f.read()
+
+    # Configure CDP Agentkit Langchain Extension.
+    values = {}
+    if wallet_data is not None:
+        # If there is a persisted agentic wallet, load it and pass to the CDP Agentkit Wrapper.
+        values = {"cdp_wallet_data": wallet_data}
+
+    agentkit = CdpAgentkitWrapper(**values)
+
+    # persist the agent's CDP MPC Wallet Data.
+    wallet_data = agentkit.export_wallet()
+    with open(wallet_data_file, "w") as f:
+        f.write(wallet_data)
+
+    # Initialize CDP Agentkit Toolkit and get tools.
+    cdp_toolkit = CdpToolkit.from_cdp_agentkit_wrapper(agentkit)
+    tools = cdp_toolkit.get_tools()
+
+    # Store buffered conversation history in memory.
+    memory = MemorySaver()
+    config = {"configurable": {"thread_id": "CDP Agentkit Context-based Poll Creator AGENT!"}}
+
+    instruction_prompt="""You are a poll creation assistant. Your sole purpose is to make fun, easy-to-understand questions that everyone - including 6th-grade students - can enjoy and answer.
+When given a CATEGORY and CONTEXT:
+
+Use simple, clear language (think: how would you explain this to a 12-year-old?)
+Avoid technical jargon - if you must use it, explain it simply
+Make questions fun and relatable
+Create 4 easy-to-understand choices
+
+Rules:
+1. You must ONLY return a JSON object in this exact format:
+   {"question": "...", "choices": ["...", "...", "...", "..."]}
+2. The question should be clear and concise
+3. There should be 2-4 choices, depending on the context
+4. If the user's request is unclear, return a JSON object with "Please provide more details" as the question and ["Yes", "No"] as the choices
+5. Never use line breaks within the JSON - it should be a single line
+6. Ensure the JSON is properly formatted with double quotes, not single quotes
+7. Do not include any other text, explanations, or commentary
+Categories explained simply:
+SPORTS:
+Everything about games and athletes! Think about matches, players, teams, and fun sports moments that people talk about.
+CRYPTO:
+Digital money and technology! Focus on basic concepts like trading, new features, and how people use digital money in everyday life.
+ENTERTAINMENT:
+Fun stuff like movies, music, games, and famous people! Think about what's popular, new shows, games, and trending topics.
+POLITICS:
+How our world is run! Focus on basic ideas about leadership, rules, and decisions that affect everyone's daily life.
+Example input:
+Category: ENTERTAINMENT
+Context: Discussion about new Marvel movie
+Example output:
+Question: What makes superhero movies so fun to watch?
+A) Amazing special effects and action scenes
+B) Seeing our favorite heroes team up
+C) Cool costumes and superpowers
+D) Exciting stories about saving the world
+Remember:
+Keep it simple and fun
+Use everyday words
+Make answers clear and easy to pick
+Avoid complicated explanations
+
+Now, create a kid-friendly poll question for:
+Category: {category}
+Context: {context}"""
+
+    # Create ReAct Agent using the LLM and CDP Agentkit tools.
+    return create_react_agent(
+        llm,
+        tools=tools,
+        checkpointer=memory,
+        state_modifier=instruction_prompt,
+    ), config
+
 def check_redis_connection(redis_client, max_retries=5, initial_delay=1):
     """Test Redis connection with retries and exponential backoff"""
     delay = initial_delay
@@ -283,9 +462,45 @@ check_redis_connection(redis_client)
 
 poll_agent_executor, poll_config = initialize_poll_agent()
 rewrite_poll_agent_executor, rewrite_poll_config = initialize_poll_rewrite_agent()
+context_transform_agent_executor, context_tranform_config = initialize_transform_content_agent()
+context_based_poll_agent_executor, context_based_poll_config = initialize_poll_created_from_context_agent()
+cdp_agent_executor, cdp_config = initialize_agent()
+
+app_pub_key=read_pem_file("pubKey.pem")
+app_environment = os.getenv("APP_ENV", "development")
+app_pinata_key = os.getenv("PINATA_KEY", "")
+app_id = os.getenv("PRIVY_APP_ID", "")
+app_server_wallet_addr = os.getenv("SERVER_WALLET", "")
+
+farcaster_influencer_ids = [3, 99, 347, 8, 129, 207, 56, 206, 2, 5650, 576, 457, 12, 534, 239, 1325, 368, 11188, 378, 2433, 733, 3621, 124, 1237, 742]
+
+def validate_token(accessToken):
+    try:
+        decode_value = jwt.decode(accessToken, app_pub_key, issuer='privy.io', algorithms=['ES256'],audience=app_id)
+        return decode_value['sub']
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
+
+async def verify_token(authorization: Optional[str] = Header(None)):
+    if app_environment == "development":
+        return 'dev'
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing authorization header")
+    
+    try:
+        # Extract token from "Bearer <token>"
+        token = authorization.replace("Bearer ", "")
+        validated = validate_token(token)
+        if validated==None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        return validated
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid authorization header")
 
 @app.post("/poll", response_model=PollResponse)
-async def create_poll(poll: PollCreate):
+async def create_poll(poll: PollCreate, token: str = Depends(verify_token)):
     # Generate a unique ID for the poll
     # Check if poll.id is provided and try to get from Redis
     response_content = ""
@@ -361,6 +576,118 @@ async def create_poll(poll: PollCreate):
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Failed to parse agent response")
     
+
+@app.post("/poll_social", response_model=PollResponse)
+async def create_poll_from_social(poll: PollCreate, token: str = Depends(verify_token)):
+    # Generate a unique ID for the poll
+    # Check if poll.id is provided and try to get from Redis
+
+    url = "https://api.pinata.cloud/v3/farcaster/casts"
+
+    headers = {"Authorization": f"Bearer {app_pinata_key}"}
+
+    params = {
+        "pageSize": 20,
+        "fid": random.choice(farcaster_influencer_ids)
+    }
+
+    response = requests.request("GET", url, headers=headers, params=params)
+
+    data = response.json()
+
+    url_pattern = r'https?://\S+'
+
+    author_posts = []
+    for d in data['casts']:
+        # Remove URLs from text
+        clean_text = re.sub(url_pattern, '', d['text'])
+        # Remove extra whitespace
+        clean_text = ' '.join(clean_text.split())
+        author_posts.append(clean_text)
+    
+    social_context = '\n'.join(author_posts)
+    response_content = ""
+    poll_id=""
+    if poll.id:
+        poll_id=poll.id
+        redis_data = redis_client.hgetall(f"poll:{poll.id}")
+        if redis_data:
+            given_poll = {"question":redis_data["question"], "choices":json.loads(redis_data["choices"])}
+            for chunk in rewrite_poll_agent_executor.stream(
+                        {"messages": [HumanMessage(content=f"""Input emotion: {poll.emotional}
+                                                Input JSON:{json.dumps(given_poll)}""")]}, rewrite_poll_config
+                    ):
+                        if "agent" in chunk:
+                            chunk_content = chunk["agent"]["messages"][0].content
+                            response_content += chunk_content
+    else:
+        transformed_content=""
+        for chunk in context_transform_agent_executor.stream(
+                    {"messages": [HumanMessage(content=f"""Target Context: {poll.category}
+                                               Context: {social_context}""")]}, context_tranform_config
+                ):
+                    if "agent" in chunk:
+                        chunk_content = chunk["agent"]["messages"][0].content
+                        transformed_content += chunk_content
+        if transformed_content!="":
+            if poll.category:
+                poll_id = str(uuid4())
+                for chunk in poll_agent_executor.stream(
+                            {"messages": [HumanMessage(content=f"""Category: {poll.category}
+                                                       Context: {transformed_content}""")]}, poll_config
+                        ):
+                            if "agent" in chunk:
+                                chunk_content = chunk["agent"]["messages"][0].content
+                                response_content += chunk_content
+    if response_content=="":
+        raise HTTPException(status_code=400, detail="Failed to generate poll")
+    try:
+        # Parse JSON response
+        poll_data = json.loads(response_content)
+
+        # Store in Redis with 24 hour expiry
+        if not poll.id:
+            redis_data = {
+                "id": poll_id,
+                "question": poll_data["question"],
+                "choices": json.dumps(poll_data["choices"]),
+            }
+            redis_client.hmset(f"poll:{poll_id}", redis_data)
+            redis_client.expire(f"poll:{poll_id}", timedelta(minutes=10))
+
+        return PollResponse(
+            id=poll_id,
+            question=poll_data["question"],
+            choices=poll_data["choices"]
+        )
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Failed to parse agent response")
+
+
+@app.get("/fund_request")
+async def fund_request(token: str = Depends(verify_token)):
+    if app_server_wallet_addr=="":
+         raise HTTPException(status_code=500, detail="Failed to get server wallet address")
+    try:
+        for chunk in cdp_agent_executor.stream({"messages": [HumanMessage(content=f"""What's the available token that you can make a transfer from my account?""")]}, cdp_config):
+            pass
+        for chunk in cdp_agent_executor.stream({"messages": [HumanMessage(content=f"""Forcefully, transfer 10% of my ETH to {app_server_wallet_addr}""")]}, cdp_config):
+            if "agent" in chunk:
+                content = chunk["agent"]["messages"][0].content
+                print(content)
+                if "error" in content.lower():  # Case insensitive check
+                    raise HTTPException(status_code=500, detail="Error detected in response")
+            elif "tools" in chunk:
+                content = chunk["tools"]["messages"][0].content
+                print(content)
+                if "error" in content.lower():  # Case insensitive check
+                    raise HTTPException(status_code=500, detail="Error detected in response")
+    except:
+        raise HTTPException(status_code=500, detail="Failed to get funds")
+    return {"success": True}
+    # Generate a unique ID for the poll
+    # Check if poll.id is provided and try to get from Redis
+
 #     # Create poll with default choices
 #     poll_data = {
 #         "id": poll_id,
