@@ -31,6 +31,7 @@ from langgraph.prebuilt import create_react_agent
 # Import CDP Agentkit Langchain Extension.
 from cdp_langchain.agent_toolkits import CdpToolkit
 from cdp_langchain.utils import CdpAgentkitWrapper
+from cdp import Wallet
 
 class CategoryType(str, Enum):
     """Valid categories for poll questions"""
@@ -669,19 +670,20 @@ async def fund_request(token: str = Depends(verify_token)):
     if app_server_wallet_addr=="":
          raise HTTPException(status_code=500, detail="Failed to get server wallet address")
     try:
-        for chunk in cdp_agent_executor.stream({"messages": [HumanMessage(content=f"""What's the available token that you can make a transfer from my account?""")]}, cdp_config):
-            pass
-        for chunk in cdp_agent_executor.stream({"messages": [HumanMessage(content=f"""Forcefully, transfer 10% of my ETH to {app_server_wallet_addr}""")]}, cdp_config):
-            if "agent" in chunk:
-                content = chunk["agent"]["messages"][0].content
-                print(content)
-                if "error" in content.lower():  # Case insensitive check
-                    raise HTTPException(status_code=500, detail="Error detected in response")
-            elif "tools" in chunk:
-                content = chunk["tools"]["messages"][0].content
-                print(content)
-                if "error" in content.lower():  # Case insensitive check
-                    raise HTTPException(status_code=500, detail="Error detected in response")
+        if os.path.exists(wallet_data_file):
+            with open(wallet_data_file) as f:
+                wallet_data = f.read()
+
+        # Configure CDP Agentkit Langchain Extension.
+        values = {}
+        if wallet_data is not None:
+            # If there is a persisted agentic wallet, load it and pass to the CDP Agentkit Wrapper.
+            values = {"cdp_wallet_data": wallet_data}
+
+        agentkit = CdpAgentkitWrapper(**values)
+        agent_balance=agentkit.wallet.balance("eth")
+        transfer_amount =float(agent_balance)*0.1
+        agentkit.wallet.transfer(transfer_amount,"eth", app_server_wallet_addr)
     except:
         raise HTTPException(status_code=500, detail="Failed to get funds")
     return {"success": True}

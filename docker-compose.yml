@@ -45,6 +45,7 @@ services:
       - REDIS_PORT=6379
     volumes:
       - ./pubKey.pem:/app/pubKey.pem
+      - ./wallet_data.txt:/app/wallet_data.txt
 
 volumes:
   postgres_data:
