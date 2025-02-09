@@ -396,7 +396,7 @@ Rules:
 1. You must ONLY return a JSON object in this exact format:
    {"question": "...", "choices": ["...", "...", "...", "..."]}
 2. The question should be clear and concise
-3. There should be 2-4 choices, depending on the context
+3. There must be 4 choices, depending on the context
 4. If the user's request is unclear, return a JSON object with "Please provide more details" as the question and ["Yes", "No"] as the choices
 5. Never use line breaks within the JSON - it should be a single line
 6. Ensure the JSON is properly formatted with double quotes, not single quotes

@@ -43,6 +43,8 @@ services:
     environment:
       - REDIS_HOST=glance_redis_service
       - REDIS_PORT=6379
+    volumes:
+      - ./pubKey.pem:/app/pubKey.pem
 
 volumes:
   postgres_data:
